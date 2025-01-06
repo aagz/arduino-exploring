@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Рисовалка схем</title>
+    <style>
+        #canvas {
+            border: 1px solid black;
+            background-color: #f9f9f9;
+        }
+        button {
+            margin-top: 10px;
+            padding: 10px 15px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <h1>Рисовалка схем</h1>
+    <svg id="canvas" width="800" height="600"></svg>
+    <br>
+    <button id="export">Экспортировать в JSON</button>
+
+    <script>
+        // Минимальный прототип рисовалки схем
+        // Использует HTML, SVG и JS
+
+        // Инициализация холста
+        const svgNamespace = "http://www.w3.org/2000/svg";
+        const canvas = document.getElementById("canvas");
+
+        // Список элементов схемы
+        const elements = [];
+        const connections = [];
+
+        // Текущий выбранный элемент для соединения
+        let selectedElement = null;
+
+        // Добавление нового элемента
+        function addElement(type, x, y) {
+            const id = `elem-${elements.length}`;
+            const element = document.createElementNS(svgNamespace, "rect");
+            element.setAttribute("x", x);
+            element.setAttribute("y", y);
+            element.setAttribute("width", 50);
+            element.setAttribute("height", 30);
+            element.setAttribute("fill", "#8fb5ff");
+            element.setAttribute("stroke", "#000");
+            element.setAttribute("data-id", id);
+
+            element.addEventListener("click", () => selectElement(id));
+
+            canvas.appendChild(element);
+            elements.push({ id, type, x, y });
+        }
+
+        // Соединение элементов
+        function connectElements(fromId, toId) {
+            const from = elements.find(e => e.id === fromId);
+            const to = elements.find(e => e.id === toId);
+
+            if (from && to) {
+                const line = document.createElementNS(svgNamespace, "line");
+                line.setAttribute("x1", from.x + 25);
+                line.setAttribute("y1", from.y + 15);
+                line.setAttribute("x2", to.x + 25);
+                line.setAttribute("y2", to.y + 15);
+                line.setAttribute("stroke", "#000");
+
+                canvas.appendChild(line);
+                connections.push({ from: fromId, to: toId });
+            }
+        }
+
+        // Выбор элемента
+        function selectElement(id) {
+            if (selectedElement) {
+                connectElements(selectedElement, id);
+                selectedElement = null;
+            } else {
+                selectedElement = id;
+            }
+        }
+
+        // Экспорт схемы в JSON
+        function exportToJSON() {
+            const data = JSON.stringify({ elements, connections }, null, 2);
+            console.log(data);
+            alert("Схема экспортирована. Смотри консоль!");
+        }
+
+        // Пример использования
+        addElement("board", 100, 100);
+        addElement("sensor", 300, 150);
+
+        // Кнопки управления
+        const exportButton = document.getElementById("export");
+        exportButton.addEventListener("click", exportToJSON);
+    </script>
+</body>
+</html>
