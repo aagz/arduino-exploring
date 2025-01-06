@@ -1,5 +1,7 @@
 #include <LiquidCrystal_I2C.h>
 #include "sounds.h"
+#include "frames.h"
+#include "button.h"
 
 #define RED_PIN 12
 #define YELLOW_PIN 11
@@ -13,7 +15,7 @@ enum GameState {
   READY,
   PREPARE,
   GAME,
-  LOSS
+  LOSE
 };
 
 enum RunningManStates {
@@ -21,27 +23,27 @@ enum RunningManStates {
   RUNNING
 };
 
-GameState gameState = READY;
-
-const uint8_t runningManFrames[2][8] = {
-  { 0x06, 0x06, 0x0E, 0x17, 0x06, 0x07, 0x0D, 0x09 }, 
-  { 0x06, 0x06, 0x0E, 0x0F, 0x0E, 0x06, 0x06, 0x07 }
+enum Entities {
+  NONE,
+  PLAYER,
+  ENEMY
 };
+
+Entities startGameField[2][12] = {
+  {NONE,NONE,NONE,NONE,NONE,NONE,NONE,ENEMY,NONE,NONE,NONE,NONE},
+  {PLAYER,NONE,NONE,NONE,NONE,NONE,NONE,NONE,NONE,NONE,NONE,ENEMY}
+};
+
+Entities gameField[2][12];
+
+GameState gameState = READY;
 
 byte currentManFrame = 0;
 
-int currentScore = 0;
+int currentScore;
 
-const uint8_t leftSeparator[8] = {
-  0x10, 0x08, 0x10, 0x08, 0x10, 0x08, 0x10, 0x08
-};
-
-bool buttonState = false;
-bool lastButtonState = false;
-bool isButtonPressed = false;
-
-unsigned long lastDebounceTime = 0;
-unsigned long debounceDelay = 50;
+int gameSpeed = 90; // 60 ticks per min
+unsigned long lastGameTick;
 
 LiquidCrystal_I2C lcd(0x27,20,4);
 
@@ -52,12 +54,13 @@ void setup() {
   lcd.init();
   lcd.backlight();
   
-  
-  for (int i = 0; i < sizeof(runningManFrames); i++) {
-    lcd.createChar(i, runningManFrames[i]);
+  for (int i = 0; i < 2; i++) {
+    lcd.createChar(i+1, runningManFrames[i]);
   }
 
-  lcd.createChar(3, leftSeparator);
+  lcd.createChar(3, leftSeparatorFrame);
+  lcd.createChar(4, enemyFrame);
+  lcd.createChar(5, emptyFrame);
 
   setupSounds(BUZZER_PIN);
 
@@ -80,35 +83,14 @@ void loop() {
   } else if (gameState == GAME) {
     game();
   } else {
+    lcd.clear();
+    lcd.setCursor(0,0);
+    lcd.print(currentScore);
     playLossSound();
+    
+    gameState = READY;
   }
   playJumpSoundNonBlocking();
-}
-
-bool checkButton() {
-  int buttonReading = digitalRead(BUTTON_PIN);
-
-  if (buttonReading != lastButtonState) {
-    lastDebounceTime = millis(); 
-  }
-
-  if ((millis() - lastDebounceTime) > debounceDelay) {
-    if (buttonReading != buttonState) {
-      buttonState = buttonReading;
-
-      if (buttonState == HIGH && !isButtonPressed) {
-        isButtonPressed = true;
-        return true;
-      }
-    }
-  }
-
-  if (buttonReading == LOW && isButtonPressed) {
-    isButtonPressed = false;
-  }
-
-  lastButtonState = buttonReading;
-  return false; 
 }
 
 void readyGame() {
@@ -123,6 +105,9 @@ void readyGame() {
 
 void prepareGame() {
   int leds[3] = {GREEN_PIN, YELLOW_PIN, RED_PIN};
+
+  memcpy(gameField, startGameField, sizeof(startGameField));
+  currentScore = 0;
 
   for (int i = 3; i >= 1; --i) {
     digitalWrite(leds[i-1], HIGH);
@@ -164,9 +149,70 @@ void game() {
   lcd.setCursor(3, 1);
   lcd.write(3);
 
+  int startField = 4;
+  for (int i = 0; i <= 12; i++) {
+    for (int j = 0; j < 2; j++) {
+      lcd.setCursor(startField + i, j);
+      
+      if (gameField[j][i] == PLAYER) {
+        // Проверяем, нужно ли обновить кадр
+        if (millis() - lastPlayerFrameTime >= playerFrameDuration) {
+          lastPlayerFrame = (lastPlayerFrame == 1) ? 2 : 1; // Смена кадра
+          lastPlayerFrameTime = millis(); // Обновление времени
+        }
+        lcd.write(lastPlayerFrame); // Отображение текущего кадра
+      } 
+      else if (gameField[j][i] == ENEMY) {
+        lcd.write(4); // Отображение врага
+      } 
+      else if (gameField[j][i] == NONE) {
+        lcd.write(5); // Отображение пустой ячейки
+      }
+    }
+  }
+
   if (checkButton()) {
+    if (gameField[0][0] == PLAYER && gameField[1][0] == NONE) {
+      gameField[0][0] = NONE;
+      gameField[1][0] = PLAYER;
+    } else if (gameField[1][0] == PLAYER && gameField[0][0] == NONE) {
+      gameField[1][0] = NONE;
+      gameField[0][0] = PLAYER;
+    } else {
+      gameState = LOSE;
+    }
+  }
+
+
+  if (millis() - lastGameTick >= 60000 / gameSpeed) {
+    for (int i = 0; i < 12; i++) {
+      for (int j = 0; j < 2; j++) {
+        if (gameField[j][i] == ENEMY && gameField[j][i-1] == PLAYER) {
+          gameState = LOSE;
+          Serial.println("LOSE");
+        } else if (gameField[j][i] == ENEMY && i > 0) {
+          gameField[j][i-1] = ENEMY;
+          gameField[j][i] = NONE;
+        } else if (gameField[j][i] == ENEMY && i == 0) {
+          gameField[j][i] = NONE;
+        }
+      }
+    }
+
+    if (gameField[0][11] == NONE && 
+      gameField[1][11] == NONE && 
+      gameField[0][10] == NONE && 
+      gameField[1][10] == NONE && random(1, 100) < 40 ) {
+      gameField[random(0,2)][11] = ENEMY;
+    }
+    lastGameTick = millis();
     currentScore++;
+  }
+
+  if (checkButton()) {
+    // currentScore++;
     // startJumpSound();
     // playJumpSoundNonBlocking();
   }
+
 }
