@@ -2,6 +2,7 @@ import serial
 import time
 import pygame
 import math
+import json
 import sys
 from threading import Thread, Lock
 
@@ -46,8 +47,10 @@ class Boid:
         self.angle = 0.0
         self.rotation_speed = 0.0
         self.smoothed_rotation = 0.0
+        self.velocity = 0.0
+        self.smoothed_velocity = 0.0
 
-    def update(self, distance, dt):
+    def update(self, distance, velocity, dt):
         # Инвертированное управление и ограничение диапазона
         if 0 <= distance <= 20:
             # Инверсия направления: <10 см - вправо, >10 см - влево
@@ -55,8 +58,18 @@ class Boid:
         else:
             target_rotation = 0  # Остановка при выходе за диапазон
 
+        # Инвертированное управление и ограничение диапазона
+        if 0 <= velocity <= 20:
+            # # Инверсия направления: <10 см - вправо, >10 см - влево
+            # target_velocity = (10 - distance) * 0.68  # Новый коэффициент для +15% скорости
+            target_velocity = (velocity - 20) * -1 * 0.5
+            # target_velocity = velocity
+        else:
+            target_velocity = BASE_SPEED  # Остановка при выходе за диапазон
+
         # Плавное изменение скорости
         self.smoothed_rotation += (target_rotation - self.smoothed_rotation) * 0.1
+        self.smoothed_velocity += (target_velocity - self.smoothed_velocity) * 0.1
 
         # Ограничение скорости
         self.rotation_speed = max(-MAX_ROTATION_SPEED,
@@ -69,8 +82,8 @@ class Boid:
         # Движение
         radians = math.radians(self.angle)
         direction = pygame.Vector2(math.cos(radians), -math.sin(radians))
-        self.x += direction.x * BASE_SPEED
-        self.y += direction.y * BASE_SPEED
+        self.x += direction.x * self.smoothed_velocity #BASE_SPEED
+        self.y += direction.y * self.smoothed_velocity #BASE_SPEED
 
         # Тороидальное пространство
         self.x = self.x % WIDTH
@@ -91,22 +104,30 @@ class Boid:
 
 
 # Глобальные переменные
-current_distance = 10.0
+current_distance_angle = 10.0
+current_distance_velocity = BASE_SPEED
 lock = Lock()
 boid = Boid()
 
 
 def arduino_reader():
-    global current_distance
+    global current_distance_angle
+    global current_distance_velocity
     while True:
         response = send_command("GET_DATA")
+        print(response)
         if response:
             try:
-                distance = float(response)
+                data = json.loads(response)
                 with lock:
-                    current_distance = distance
-            except:
-                pass
+                    current_distance_angle = data["a"]
+                    current_distance_velocity = data["v"]
+            except json.JSONDecodeError as e:
+                print(f"Ошибка парсинга JSON: {e}, Ответ: '{response}'")
+            except KeyError as e:
+                print(f"Отсутствует ключ: {e}, Ответ: '{response}'")
+            except Exception as e:
+                print(f"Общая ошибка: {e}")
         time.sleep(0.02)
 
 
@@ -126,22 +147,29 @@ while running:
             running = False
 
     with lock:
-        boid.update(current_distance, dt)
+        boid.update(current_distance_angle, current_distance_velocity, dt)
 
     screen.fill((255, 240, 240))
     boid.draw(screen)
 
     # Визуализация данных
     status_text = [
-        f"Расстояние: {current_distance:.1f} см",
+        f"Расстояние (угол): {current_distance_angle:.1f} см",
+        f"Расстояние (скорость): {current_distance_velocity:.1f} см",
         f"Скорость поворота: {boid.rotation_speed:.1f}°/фрейм",
+        f"Скорость: {boid.smoothed_velocity:.1f}/фрейм",
         f"Угол: {boid.angle:.1f}°"
     ]
 
     # Предупреждение при выходе за диапазон
-    if current_distance < 0 or current_distance > 20:
-        warn_text = font.render("ВНЕ ДИАПАЗОНА!", True, warning_color)
-        screen.blit(warn_text, (WIDTH - 250, 10))
+    if current_distance_angle < 0 or current_distance_angle > 20:
+        warn_text = font.render("ДАТЧИК УГЛА ВНЕ ДИАПАЗОНА!", True, warning_color)
+        screen.blit(warn_text, (WIDTH - 350, 10))
+
+    # Предупреждение при выходе за диапазон
+    if current_distance_velocity < 0 or current_distance_velocity > 20:
+        warn_text = font.render("ДАТЧИК СКОРОСТИ ВНЕ ДИАПАЗОНА!", True, warning_color)
+        screen.blit(warn_text, (WIDTH - 350, 40))
 
     # Отрисовка текста
     y_offset = 10
